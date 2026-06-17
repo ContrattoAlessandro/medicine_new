@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import pywt
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from models.timeseries_utils import butter_filter, apply_butter_filter
 
@@ -138,6 +139,47 @@ def main():
 
     plt.tight_layout()
     plt.savefig(os.path.join(plots_dir, 'raw_vs_filtered.png'), dpi=300)
+    plt.close()
+
+    # =========================================================================
+    # PLOT 2B: Wavelet Scalogram Before and After Filtering (Slide 8)
+    # =========================================================================
+    print("Generating Plot 2B: Wavelet Scalogram Before and After Filtering...")
+    widths = np.arange(1, 64)
+    # Compute Continuous Wavelet Transform (CWT) using Mexican Hat wavelet
+    cwt_raw, _ = pywt.cwt(raw_lead[zoom_mask], widths, 'mexh')
+    cwt_filtered, _ = pywt.cwt(filtered_lead[zoom_mask], widths, 'mexh')
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex='col')
+
+    # Top-Left: Raw 1D signal
+    axes[0, 0].plot(time[zoom_mask], raw_lead[zoom_mask], color='#e74c3c', linewidth=1.5)
+    axes[0, 0].set_title("Raw ECG Signal (Zoom 3s)", pad=10)
+    axes[0, 0].set_ylabel("Amplitude (mV)")
+
+    # Bottom-Left: Raw 2D Scalogram
+    im_raw = axes[1, 0].imshow(np.abs(cwt_raw), extent=[time[zoom_mask][0], time[zoom_mask][-1], 1, 64],
+                               cmap='viridis', aspect='auto', interpolation='bilinear', origin='lower')
+    axes[1, 0].set_title("CWT Scalogram (Raw)", pad=10)
+    axes[1, 0].set_ylabel("Scale (Width)")
+    axes[1, 0].set_xlabel("Time (s)")
+    fig.colorbar(im_raw, ax=axes[1, 0], label="Magnitude")
+
+    # Top-Right: Filtered 1D signal
+    axes[0, 1].plot(time[zoom_mask], filtered_lead[zoom_mask], color='#27ae60', linewidth=1.5)
+    axes[0, 1].set_title("Filtered ECG Signal (Zoom 3s)", pad=10)
+    axes[0, 1].set_ylabel("Amplitude (mV)")
+
+    # Bottom-Right: Filtered 2D Scalogram
+    im_filtered = axes[1, 1].imshow(np.abs(cwt_filtered), extent=[time[zoom_mask][0], time[zoom_mask][-1], 1, 64],
+                                    cmap='viridis', aspect='auto', interpolation='bilinear', origin='lower')
+    axes[1, 1].set_title("CWT Scalogram (Filtered)", pad=10)
+    axes[1, 1].set_ylabel("Scale (Width)")
+    axes[1, 1].set_xlabel("Time (s)")
+    fig.colorbar(im_filtered, ax=axes[1, 1], label="Magnitude")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, 'wavelet_before_after.png'), dpi=300)
     plt.close()
 
     # =========================================================================

@@ -36,8 +36,13 @@ def main():
     print("==========================================\n", flush=True)
 
     experiments = [
-        ('exp0', 'all')
-       ]
+        ('exp0', 'all'),
+        ('exp1', 'diagnostic'),
+        ('exp1.1', 'subdiagnostic'),
+        ('exp1.1.1', 'superdiagnostic'),
+        ('exp2', 'form'),
+        ('exp3', 'rhythm')
+    ]
 
     for name, task in experiments:
         print(f"\n--- Running experiment: {name} (task: {task}) ---", flush=True)
@@ -78,8 +83,13 @@ def main():
     print("==========================================\n", flush=True)
 
     experiments_aug = [
-        ('exp0_aug', 'all')
-       ]
+        ('exp0_aug', 'all'),
+        ('exp1_aug', 'diagnostic'),
+        ('exp1.1_aug', 'subdiagnostic'),
+        ('exp1.1.1_aug', 'superdiagnostic'),
+        ('exp2_aug', 'form'),
+        ('exp3_aug', 'rhythm')
+    ]
 
     for name, task in experiments_aug:
         print(f"\n--- Running experiment: {name} (task: {task}) ---", flush=True)
@@ -120,8 +130,13 @@ def main():
     print("==========================================\n", flush=True)
 
     experiments_filtered_aug = [
-        ('exp0_filtered_aug', 'all')
-       ]
+        ('exp0_filtered_aug', 'all'),
+        ('exp1_filtered_aug', 'diagnostic'),
+        ('exp1.1_filtered_aug', 'subdiagnostic'),
+        ('exp1.1.1_filtered_aug', 'superdiagnostic'),
+        ('exp2_filtered_aug', 'form'),
+        ('exp3_filtered_aug', 'rhythm')
+    ]
 
     for name, task in experiments_filtered_aug:
         print(f"\n--- Running experiment: {name} (task: {task}) ---", flush=True)
@@ -162,8 +177,13 @@ def main():
     print("==========================================\n", flush=True)
 
     experiments_filtered_aug_balanced = [
-        ('exp0_filtered_aug_balanced', 'all')
-       ]
+        ('exp0_filtered_aug_balanced', 'all'),
+        ('exp1_filtered_aug_balanced', 'diagnostic'),
+        ('exp1.1_filtered_aug_balanced', 'subdiagnostic'),
+        ('exp1.1.1_filtered_aug_balanced', 'superdiagnostic'),
+        ('exp2_filtered_aug_balanced', 'form'),
+        ('exp3_filtered_aug_balanced', 'rhythm')
+    ]
 
     for name, task in experiments_filtered_aug_balanced:
         print(f"\n--- Running experiment: {name} (task: {task}) ---", flush=True)
