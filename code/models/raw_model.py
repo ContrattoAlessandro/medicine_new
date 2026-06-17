@@ -78,7 +78,7 @@ def get_ecg_features(ecg_data, parallel=True):
         return np.array(list_features)
 
 class RawModel(ClassificationModel):
-    def __init__(self, name, n_classes, freq, outputfolder, input_shape, classifier='NN'):
+    def __init__(self, name, n_classes, freq, outputfolder, input_shape, classifier='NN', augment=False, class_balancing=False, pos_weight_cap=10.0):
         self.name = name
         self.outputfolder = outputfolder
         self.n_classes = n_classes
@@ -89,6 +89,9 @@ class RawModel(ClassificationModel):
         self.final_activation = 'sigmoid'
         self.n_dense_dim = 128
         self.epochs = 30
+        self.augment = augment
+        self.class_balancing = class_balancing
+        self.pos_weight_cap = pos_weight_cap
 
     def fit(self, X_train, y_train, X_val, y_val):
         XF_train = get_ecg_features(X_train)
@@ -97,7 +100,26 @@ class RawModel(ClassificationModel):
         if self.classifier == 'NN':
             from keras.layers import Dropout, Dense, Input
             from keras.models import Model
-            from keras.callbacks import ModelCheckpoint
+            from keras.callbacks import ModelCheckpoint, Callback
+            import logging
+            logging.getLogger('absl').setLevel(logging.ERROR)
+
+            class FastaiStyleCallback(Callback):
+                def __init__(self, name):
+                    self.name = name
+                def on_train_begin(self, logs=None):
+                    print("model:", self.name, flush=True)
+                    print(f"{'epoch':<9}{'train_loss':<12}{'valid_loss':<12}{'time':<10}", flush=True)
+                def on_epoch_begin(self, epoch, logs=None):
+                    self.start_time = time.time()
+                def on_epoch_end(self, epoch, logs=None):
+                    elapsed = time.time() - self.start_time
+                    mins = int(elapsed // 60)
+                    secs = int(elapsed % 60)
+                    time_str = f"{mins:02d}:{secs:02d}"
+                    train_loss = logs.get('loss', 0.0)
+                    val_loss = logs.get('val_loss', 0.0)
+                    print(f"{epoch:<9}{train_loss:<12.6f}{val_loss:<12.6f}{time_str:<10}", flush=True)
 
             # Standardize input data
             ss = StandardScaler()
@@ -112,11 +134,31 @@ class RawModel(ClassificationModel):
             y = Dense(self.n_classes, activation=self.final_activation)(x)
             self.model = Model(input_x, y)
             
-            self.model.compile(optimizer='adamax', loss='binary_crossentropy')
+            if self.class_balancing:
+                pos_samples = y_train.sum(axis=0)
+                neg_samples = y_train.shape[0] - pos_samples
+                pos_weight = np.ones(y_train.shape[1], dtype=np.float32)
+                mask = pos_samples > 0
+                pos_weight[mask] = neg_samples[mask] / pos_samples[mask]
+                if self.pos_weight_cap is not None:
+                    pos_weight = np.clip(pos_weight, None, self.pos_weight_cap)
+                
+                import keras.ops as K
+                pos_weight_const = K.cast(pos_weight, dtype='float32')
+                
+                def weighted_binary_crossentropy(y_true, y_pred):
+                    epsilon = 1e-7
+                    y_pred = K.clip(y_pred, epsilon, 1.0 - epsilon)
+                    bce = y_true * K.log(y_pred) * pos_weight_const + (1.0 - y_true) * K.log(1.0 - y_pred)
+                    return -K.mean(bce, axis=-1)
+                
+                self.model.compile(optimizer='adamax', loss=weighted_binary_crossentropy)
+            else:
+                self.model.compile(optimizer='adamax', loss='binary_crossentropy')
             
             # Monitor validation error
-            mc_loss = ModelCheckpoint(self.outputfolder + 'best_loss_model.h5', monitor='val_loss', mode='min', verbose=1, save_best_only=True)
-            self.model.fit(XFT_train, y_train, validation_data=(XFT_val, y_val), epochs=self.epochs, batch_size=128, callbacks=[mc_loss])
+            mc_loss = ModelCheckpoint(self.outputfolder + 'best_loss_model.h5', monitor='val_loss', mode='min', verbose=0, save_best_only=True)
+            self.model.fit(XFT_train, y_train, validation_data=(XFT_val, y_val), epochs=self.epochs, batch_size=128, verbose=0, callbacks=[mc_loss, FastaiStyleCallback(self.name)])
             self.model.save(self.outputfolder + 'last_model.h5')
 
     def predict(self, X):
@@ -125,5 +167,5 @@ class RawModel(ClassificationModel):
             from keras.models import load_model
             ss = pickle.load(open(self.outputfolder + 'ss.pkl', 'rb'))
             XFT = ss.transform(XF)
-            model = load_model(self.outputfolder + 'best_loss_model.h5')
+            model = load_model(self.outputfolder + 'best_loss_model.h5', compile=False)
             return model.predict(XFT)

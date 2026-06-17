@@ -371,6 +371,81 @@ class CenterCrop(object):
 
         return {'data': data, 'label': label, "ID":ID}
 
+class DataAugmentation(object):
+    """Apply Jittering, Scaling, and Lead Dropout to the ECG sample.
+    """
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+
+    def __call__(self, sample):
+        if not self.enabled:
+            return sample
+        data, label, ID = sample['data'], sample['label'], sample['ID']
+        
+        x_aug = data.copy().astype(np.float32)
+        
+        # 1. Jittering (Rumore Gaussiano)
+        jitter = np.random.normal(0, 0.02, size=x_aug.shape).astype(np.float32)
+        x_aug += jitter
+        
+        # 2. Scaling (Riscalamento dei canali)
+        scaling_factors = np.random.uniform(0.8, 1.2, size=(1, x_aug.shape[1])).astype(np.float32)
+        x_aug *= scaling_factors
+        
+        # 3. Lead Dropout (Scollegamento casuale delle derivazioni)
+        dropout_mask = np.random.binomial(1, 0.95, size=(1, x_aug.shape[1])).astype(np.float32)
+        x_aug *= dropout_mask
+        
+        return {'data': x_aug, 'label': label, 'ID': ID}
+
+try:
+    from keras.utils import Sequence
+except ImportError:
+    try:
+        from tensorflow.keras.utils import Sequence
+    except ImportError:
+        Sequence = object
+
+class ECGKerasSequence(Sequence):
+    def __init__(self, X, y, batch_size, augment=False, get_single_feature_fn=None, ss=None):
+        self.X = X
+        self.y = y
+        self.batch_size = batch_size
+        self.augment = augment
+        self.get_single_feature_fn = get_single_feature_fn
+        self.ss = ss
+
+    def __len__(self):
+        return int(np.ceil(len(self.X) / float(self.batch_size)))
+
+    def __getitem__(self, idx):
+        batch_x = self.X[idx * self.batch_size : (idx + 1) * self.batch_size]
+        batch_y = self.y[idx * self.batch_size : (idx + 1) * self.batch_size]
+        
+        if self.augment:
+            augmented_x = []
+            for x in batch_x:
+                x_aug = x.copy().astype(np.float32)
+                # 1. Jittering
+                jitter = np.random.normal(0, 0.02, size=x_aug.shape).astype(np.float32)
+                x_aug += jitter
+                # 2. Scaling
+                scaling_factors = np.random.uniform(0.8, 1.2, size=(1, x_aug.shape[1])).astype(np.float32)
+                x_aug *= scaling_factors
+                # 3. Lead Dropout
+                dropout_mask = np.random.binomial(1, 0.95, size=(1, x_aug.shape[1])).astype(np.float32)
+                x_aug *= dropout_mask
+                augmented_x.append(x_aug)
+            batch_x = augmented_x
+
+        # Extract features for this batch
+        features = np.array([self.get_single_feature_fn(x) for x in batch_x])
+        
+        if self.ss is not None:
+            features = self.ss.transform(features)
+            
+        return features, batch_y
+
 class GaussianNoise(object):
     """Add gaussian noise to sample.
     """

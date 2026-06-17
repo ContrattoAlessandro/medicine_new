@@ -11,7 +11,7 @@ from fastai.callbacks.tracker import SaveModelCallback
 from pathlib import Path
 from functools import partial
 
-from models.resnet1d import resnet1d18,resnet1d34,resnet1d50,resnet1d101,resnet1d152,resnet1d_wang,resnet1d,wrn1d_22,weight_init
+from models.resnet1d import resnet1d18,resnet1d34,resnet1d50,resnet1d101,resnet1d152,resnet1d,wrn1d_22,weight_init
 import math
 
 from models.base_model import ClassificationModel
@@ -162,7 +162,7 @@ def losses_plot(learner, path, filename="losses", last:int=None):
     plt.switch_backend(backend_old)
 
 class fastai_model(ClassificationModel):
-    def __init__(self,name,n_classes,freq,outputfolder,input_shape,pretrained=False,input_size=2.5,input_channels=12,chunkify_train=False,chunkify_valid=True,bs=128,ps_head=0.5,lin_ftrs_head=[128],wd=1e-2,epochs=50,lr=1e-2,kernel_size=5,loss="binary_cross_entropy",pretrainedfolder=None,n_classes_pretrained=None,gradual_unfreezing=True,discriminative_lrs=True,epochs_finetuning=30,early_stopping=None,aggregate_fn="max",concat_train_val=False):
+    def __init__(self,name,n_classes,freq,outputfolder,input_shape,pretrained=False,input_size=2.5,input_channels=12,chunkify_train=False,chunkify_valid=True,bs=128,ps_head=0.5,lin_ftrs_head=[128],wd=1e-2,epochs=50,lr=1e-2,kernel_size=5,loss="binary_cross_entropy",pretrainedfolder=None,n_classes_pretrained=None,gradual_unfreezing=True,discriminative_lrs=True,epochs_finetuning=30,early_stopping=None,aggregate_fn="max",concat_train_val=False,augment=False,class_balancing=False,pos_weight_cap=10.0):
         super().__init__()
         
         self.name = name
@@ -211,6 +211,9 @@ class fastai_model(ClassificationModel):
         self.early_stopping = early_stopping
         self.aggregate_fn = aggregate_fn
         self.concat_train_val = concat_train_val
+        self.augment = augment
+        self.class_balancing = class_balancing
+        self.pos_weight_cap = pos_weight_cap
 
     def fit(self, X_train, y_train, X_val, y_val):
         #convert everything to float32
@@ -308,15 +311,32 @@ class fastai_model(ClassificationModel):
         df_train = pd.DataFrame({"data":range(len(X_train)),"label":y_train})
         df_valid = pd.DataFrame({"data":range(len(X_val)),"label":y_val})
         
-        tfms_ptb_xl = [ToTensor()]
+        tfms_train = [ToTensor()]
+        if hasattr(self, 'augment') and self.augment:
+            tfms_train = [DataAugmentation(enabled=True), ToTensor()]
+            
+        tfms_valid = [ToTensor()]
                 
-        ds_train=TimeseriesDatasetCrops(df_train,self.input_size,num_classes=self.num_classes,chunk_length=self.chunk_length_train if self.chunkify_train else 0,min_chunk_length=self.min_chunk_length,stride=self.stride_length_train,transforms=tfms_ptb_xl,annotation=False,col_lbl ="label",npy_data=X_train)
-        ds_valid=TimeseriesDatasetCrops(df_valid,self.input_size,num_classes=self.num_classes,chunk_length=self.chunk_length_valid if self.chunkify_valid else 0,min_chunk_length=self.min_chunk_length,stride=self.stride_length_valid,transforms=tfms_ptb_xl,annotation=False,col_lbl ="label",npy_data=X_val)
+        ds_train=TimeseriesDatasetCrops(df_train,self.input_size,num_classes=self.num_classes,chunk_length=self.chunk_length_train if self.chunkify_train else 0,min_chunk_length=self.min_chunk_length,stride=self.stride_length_train,transforms=tfms_train,annotation=False,col_lbl ="label",npy_data=X_train)
+        ds_valid=TimeseriesDatasetCrops(df_valid,self.input_size,num_classes=self.num_classes,chunk_length=self.chunk_length_valid if self.chunkify_valid else 0,min_chunk_length=self.min_chunk_length,stride=self.stride_length_valid,transforms=tfms_valid,annotation=False,col_lbl ="label",npy_data=X_val)
     
         db = DataBunch.create(ds_train,ds_valid,bs=self.bs,num_workers=0)
 
         if(self.loss == "binary_cross_entropy"):
-            loss = F.binary_cross_entropy_with_logits
+            if getattr(self, 'class_balancing', False):
+                y_train_arr = np.array(y_train)
+                pos_samples = y_train_arr.sum(axis=0)
+                neg_samples = y_train_arr.shape[0] - pos_samples
+                pos_weight = np.ones(y_train_arr.shape[1], dtype=np.float32)
+                mask = pos_samples > 0
+                pos_weight[mask] = neg_samples[mask] / pos_samples[mask]
+                if getattr(self, 'pos_weight_cap', None) is not None:
+                    pos_weight = np.clip(pos_weight, None, self.pos_weight_cap)
+                device = defaults.device if torch.cuda.is_available() else torch.device('cpu')
+                pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float32).to(device)
+                loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+            else:
+                loss = F.binary_cross_entropy_with_logits
         elif(self.loss == "cross_entropy"):
             loss = F.cross_entropy
         elif(self.loss == "mse"):
@@ -332,7 +352,7 @@ class fastai_model(ClassificationModel):
 
         print("model:",self.name) #note: all models of a particular kind share the same prefix but potentially a different postfix such as _input256
         num_classes = self.num_classes if num_classes is None else num_classes
-        #resnet resnet1d18,resnet1d34,resnet1d50,resnet1d101,resnet1d152,resnet1d_wang,resnet1d,wrn1d_22
+        #resnet resnet1d18,resnet1d34,resnet1d50,resnet1d101,resnet1d152,resnet1d,wrn1d_22
         if(self.name.startswith("fastai_resnet1d18")):
             model = resnet1d18(num_classes=num_classes,input_channels=self.input_channels,inplanes=128,kernel_size=self.kernel_size,ps_head=self.ps_head,lin_ftrs_head=self.lin_ftrs_head)
         elif(self.name.startswith("fastai_resnet1d34")):
@@ -343,8 +363,6 @@ class fastai_model(ClassificationModel):
             model = resnet1d101(num_classes=num_classes,input_channels=self.input_channels,inplanes=128,kernel_size=self.kernel_size,ps_head=self.ps_head,lin_ftrs_head=self.lin_ftrs_head)
         elif(self.name.startswith("fastai_resnet1d152")):
             model = resnet1d152(num_classes=num_classes,input_channels=self.input_channels,inplanes=128,kernel_size=self.kernel_size,ps_head=self.ps_head,lin_ftrs_head=self.lin_ftrs_head)
-        elif(self.name.startswith("fastai_resnet1d_wang")):
-            model = resnet1d_wang(num_classes=num_classes,input_channels=self.input_channels,kernel_size=self.kernel_size,ps_head=self.ps_head,lin_ftrs_head=self.lin_ftrs_head)
         elif(self.name.startswith("fastai_wrn1d_22")):    
             model = wrn1d_22(num_classes=num_classes,input_channels=self.input_channels,kernel_size=self.kernel_size,ps_head=self.ps_head,lin_ftrs_head=self.lin_ftrs_head)
         

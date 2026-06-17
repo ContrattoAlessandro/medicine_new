@@ -11,7 +11,7 @@ class SCP_Experiment():
         Experiment on SCP-ECG statements. All experiments based on SCP are performed and evaluated the same way.
     '''
 
-    def __init__(self, experiment_name, task, datafolder, outputfolder, models, sampling_frequency=100, min_samples=0, train_fold=8, val_fold=9, test_fold=10, folds_type='strat'):
+    def __init__(self, experiment_name, task, datafolder, outputfolder, models, sampling_frequency=100, min_samples=0, train_fold=8, val_fold=9, test_fold=10, folds_type='strat', augment=False, filter_type=None, class_balancing=False, pos_weight_cap=10.0):
         self.models = models
         self.min_samples = min_samples
         self.task = task
@@ -23,8 +23,20 @@ class SCP_Experiment():
         self.outputfolder = outputfolder
         self.datafolder = datafolder
         self.sampling_frequency = sampling_frequency
-        self.zero_shot = (self.experiment_name == 'exp_ICBEB')
-        self.zero_shot_ref_exp = 'exp0'
+        self.augment = augment
+        self.filter_type = filter_type
+        self.class_balancing = class_balancing
+        self.pos_weight_cap = pos_weight_cap
+        self.zero_shot = self.experiment_name.startswith('exp_ICBEB')
+        
+        suffix = ''
+        if self.filter_type is not None:
+            suffix += '_filtered'
+        if self.augment:
+            suffix += '_aug'
+        if self.class_balancing:
+            suffix += '_balanced'
+        self.zero_shot_ref_exp = 'exp0' + suffix
 
         # create folder structure if needed
         if not os.path.exists(self.outputfolder+self.experiment_name):
@@ -39,6 +51,12 @@ class SCP_Experiment():
     def prepare(self):
         # Load PTB-XL data
         self.data, self.raw_labels = utils.load_dataset(self.datafolder, self.sampling_frequency)
+
+        # Apply filtering if requested
+        if self.filter_type == 'bandpass':
+            from models.timeseries_utils import butter_filter, apply_butter_filter
+            filter_sos = butter_filter(lowcut=0.5, highcut=40.0, fs=self.sampling_frequency, order=5, btype='band')
+            self.data = np.array([apply_butter_filter(x, filter_sos) for x in self.data])
 
         # Preprocess label data
         self.labels = utils.compute_label_aggregations(self.raw_labels, self.datafolder, self.task)
@@ -134,19 +152,16 @@ class SCP_Experiment():
             # load respective model
             if modeltype == 'WAVELET':
                 from models.wavelet import WaveletModel
-                model = WaveletModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams)
-            elif modeltype == 'FFT':
-                from models.fft_model import FFTModel
-                model = FFTModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams)
+                model = WaveletModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams, augment=self.augment, class_balancing=self.class_balancing, pos_weight_cap=self.pos_weight_cap)
             elif modeltype == 'RAW_STATS':
                 from models.raw_model import RawModel
-                model = RawModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams)
+                model = RawModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams, augment=self.augment, class_balancing=self.class_balancing, pos_weight_cap=self.pos_weight_cap)
             elif modeltype == 'PATCHTST':
                 from models.patchtst_model import PatchTSTModel
-                model = PatchTSTModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams)
+                model = PatchTSTModel(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams, augment=self.augment, class_balancing=self.class_balancing, pos_weight_cap=self.pos_weight_cap)
             elif modeltype == "fastai_model":
                 from models.fastai_model import fastai_model
-                model = fastai_model(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams)
+                model = fastai_model(modelname, ref_n_classes, self.sampling_frequency, model_dir, self.input_shape, **modelparams, augment=self.augment, class_balancing=self.class_balancing, pos_weight_cap=self.pos_weight_cap)
             else:
                 assert(True)
                 break

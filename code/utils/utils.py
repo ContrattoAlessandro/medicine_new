@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import wfdb
 import ast
-from sklearn.metrics import fbeta_score, roc_auc_score, roc_curve, roc_curve, auc
+from sklearn.metrics import fbeta_score, roc_auc_score, roc_curve, auc, average_precision_score
 from sklearn.preprocessing import StandardScaler, MultiLabelBinarizer
 from matplotlib.axes._axes import _log as matplotlib_axes_logger
 import warnings
@@ -64,6 +64,7 @@ def evaluate_experiment(y_true, y_pred, thresholds=None):
 
     # label based metric
     results['macro_auc'] = roc_auc_score(y_true, y_pred, average='macro')
+    results['macro_aupr'] = average_precision_score(y_true, y_pred, average='macro')
     
     results['Fmax'] = compute_fmax(y_true, y_pred)
     results['F1'] = results['Fmax']
@@ -370,16 +371,16 @@ def apply_standardizer(X, ss):
 
 # DOCUMENTATION STUFF
 
-def generate_ptbxl_summary_table(selection=None, folder='../output/'):
+def generate_ptbxl_summary_table(selection=None, folder='../output/', suffix=''):
 
-    exps = ['exp0', 'exp1', 'exp1.1', 'exp1.1.1', 'exp2', 'exp3']
+    exps = [f'{e}{suffix}' for e in ['exp0', 'exp1', 'exp1.1', 'exp1.1.1', 'exp2', 'exp3']]
     metric1 = 'macro_auc'
 
     # get models
     models = {}
     for i, exp in enumerate(exps):
         if selection is None:
-            exp_models = [os.path.basename(m) for m in glob.glob(folder+str(exp)+'/models/*')]
+            exp_models = [os.path.basename(m) for m in glob.glob(folder+str(exp)+'/models/*') if os.path.exists(os.path.join(m, 'results', 'te_results.csv'))]
         else:
             exp_models = selection
         if i == 0:
@@ -387,14 +388,11 @@ def generate_ptbxl_summary_table(selection=None, folder='../output/'):
         else:
             models = models.union(set(exp_models))
 
-    results_dic = {'Method':[], 
-                'exp0_AUC':[], 'exp0_F1':[],
-                'exp1_AUC':[], 'exp1_F1':[],
-                'exp1.1_AUC':[], 'exp1.1_F1':[],
-                'exp1.1.1_AUC':[], 'exp1.1.1_F1':[],
-                'exp2_AUC':[], 'exp2_F1':[],
-                'exp3_AUC':[], 'exp3_F1':[]
-                }
+    results_dic = {'Method':[]}
+    for e in exps:
+        results_dic[e+'_AUC'] = []
+        results_dic[e+'_AUPR'] = []
+        results_dic[e+'_F1'] = []
 
     for m in models:
         results_dic['Method'].append(m)
@@ -408,6 +406,13 @@ def generate_ptbxl_summary_table(selection=None, folder='../output/'):
                 unc1 = max(me_res.loc['upper'][metric1]-me_res.loc['point'][metric1], me_res.loc['point'][metric1]-me_res.loc['lower'][metric1])
                 results_dic[e+'_AUC'].append("%.3f(%.2d)" %(np.round(mean1,3), int(unc1*1000)))
 
+                if 'macro_aupr' in me_res.columns:
+                    mean_aupr = me_res.loc['point']['macro_aupr']
+                    unc_aupr = max(me_res.loc['upper']['macro_aupr']-me_res.loc['point']['macro_aupr'], me_res.loc['point']['macro_aupr']-me_res.loc['lower']['macro_aupr'])
+                    results_dic[e+'_AUPR'].append("%.3f(%.2d)" %(np.round(mean_aupr,3), int(unc_aupr*1000)))
+                else:
+                    results_dic[e+'_AUPR'].append("--")
+
                 if 'Fmax' in me_res.columns:
                     mean2 = me_res.loc['point']['Fmax']
                     unc2 = max(me_res.loc['upper']['Fmax']-me_res.loc['point']['Fmax'], me_res.loc['point']['Fmax']-me_res.loc['lower']['Fmax'])
@@ -417,6 +422,7 @@ def generate_ptbxl_summary_table(selection=None, folder='../output/'):
 
             except FileNotFoundError:
                 results_dic[e+'_AUC'].append("--")
+                results_dic[e+'_AUPR'].append("--")
                 results_dic[e+'_F1'].append("--")
             
             
@@ -424,7 +430,7 @@ def generate_ptbxl_summary_table(selection=None, folder='../output/'):
     df_index = df[df.Method.isin(['naive', 'ensemble'])]
     df_rest = df[~df.Method.isin(['naive', 'ensemble'])]
     df = pd.concat([df_rest, df_index])
-    df.to_csv(folder+'results_ptbxl.csv')
+    df.to_csv(folder+'results_ptbxl'+suffix+'.csv')
 
     titles = [
         '### 1. PTB-XL: all statements',
@@ -439,17 +445,17 @@ def generate_ptbxl_summary_table(selection=None, folder='../output/'):
     md_source = ''
     for i, e in enumerate(exps):
         md_source += '\n '+titles[i]+' \n \n'
-        md_source += '| Model | AUC &darr; | F1 | \n'
-        md_source += '|---:|:---|:---| \n'
-        for row in df_rest[['Method', e+'_AUC', e+'_F1']].sort_values(e+'_AUC', ascending=False).values:
-            md_source += '| ' + row[0].replace('fastai_', '') + ' | ' + row[1] + ' | ' + row[2] + ' | \n'
+        md_source += '| Model | AUC &darr; | AUPR | F1 | \n'
+        md_source += '|---:|:---|:---|:---| \n'
+        for row in df_rest[['Method', e+'_AUC', e+'_AUPR', e+'_F1']].sort_values(e+'_AUC', ascending=False).values:
+            md_source += '| ' + row[0].replace('fastai_', '') + ' | ' + row[1] + ' | ' + row[2] + ' | ' + row[3] + ' | \n'
     print(md_source)
 
-def ICBEBE_table(selection=None, folder='../output/'):
-    cols = ['macro_auc', 'F1']
+def ICBEBE_table(selection=None, folder='../output/', suffix=''):
+    cols = ['macro_auc', 'macro_aupr', 'F1']
 
     if selection is None:
-        models = [os.path.basename(m).split('_pretrained')[0] for m in glob.glob(folder+'exp_ICBEB/models/*')]
+        models = [os.path.basename(m).split('_pretrained')[0] for m in glob.glob(folder+'exp_ICBEB'+suffix+'/models/*') if os.path.exists(os.path.join(m, 'results', 'te_results.csv'))]
     else:
         models = [] 
         for s in selection:
@@ -460,26 +466,32 @@ def ICBEBE_table(selection=None, folder='../output/'):
     valid_models = []
     for model in models:
         try:
-            me_res = pd.read_csv(folder+'exp_ICBEB/models/'+model+'/results/te_results.csv', index_col=0)
+            me_res = pd.read_csv(folder+'exp_ICBEB'+suffix+'/models/'+model+'/results/te_results.csv', index_col=0)
             mcol=[]
             for col in cols:
-                mean = me_res.loc['point'][col]
-                unc = max(me_res.loc['upper'][col]-me_res.loc['point'][col], me_res.loc['point'][col]-me_res.loc['lower'][col])
-                mcol.append("%.3f(%.2d)" %(np.round(mean,3), int(unc*1000)))
+                if col in me_res.columns:
+                    mean = me_res.loc['point'][col]
+                    unc = max(me_res.loc['upper'][col]-me_res.loc['point'][col], me_res.loc['point'][col]-me_res.loc['lower'][col])
+                    mcol.append("%.3f(%.2d)" %(np.round(mean,3), int(unc*1000)))
+                else:
+                    mcol.append("--")
             data.append(mcol)
             valid_models.append(model)
         except FileNotFoundError:
             continue
     data = np.array(data)
 
-    df = pd.DataFrame(data, columns=cols, index=valid_models)
-    df.to_csv(folder+'results_icbeb.csv')
+    if len(data) > 0:
+        df = pd.DataFrame(data, columns=cols, index=valid_models)
+        df.to_csv(folder+'results_icbeb'+suffix+'.csv')
 
-    df_rest = df[~df.index.isin(['naive', 'ensemble'])]
-    df_rest = df_rest.sort_values('macro_auc', ascending=False)
+        df_rest = df[~df.index.isin(['naive', 'ensemble'])]
+        df_rest = df_rest.sort_values('macro_auc', ascending=False)
 
-    md_source = '| Model | AUC &darr; | F1 | \n'
-    md_source += '|---:|:---|:---| \n'
-    for i, row in enumerate(df_rest[cols].values):
-        md_source += '| ' + df_rest.index[i].replace('fastai_', '') + ' | ' + row[0] + ' | ' + row[1] + ' | \n'
-    print(md_source)
+        md_source = '| Model | AUC &darr; | AUPR | F1 | \n'
+        md_source += '|---:|:---|:---|:---| \n'
+        for i, row in enumerate(df_rest[cols].values):
+            md_source += '| ' + df_rest.index[i].replace('fastai_', '') + ' | ' + row[0] + ' | ' + row[1] + ' | ' + row[2] + ' | \n'
+        print(md_source)
+    else:
+        print("No results found for ICBEB table generation.")

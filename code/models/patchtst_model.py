@@ -32,15 +32,30 @@ class PatchTSTConfig:
         self.kernel_size = kernel_size
 
 class ECGDataset(Dataset):
-    def __init__(self, X, y=None):
+    def __init__(self, X, y=None, augment=False):
         self.X = X
         self.y = y
+        self.augment = augment
         
     def __len__(self):
         return len(self.X)
         
     def __getitem__(self, idx):
-        x = torch.tensor(self.X[idx], dtype=torch.float32)
+        x = self.X[idx]
+        if self.augment:
+            x_aug = x.copy().astype(np.float32)
+            # 1. Jittering (Rumore Gaussiano)
+            jitter = np.random.normal(0, 0.02, size=x_aug.shape).astype(np.float32)
+            x_aug += jitter
+            # 2. Scaling (Riscalamento dei canali)
+            scaling_factors = np.random.uniform(0.8, 1.2, size=(1, x_aug.shape[1])).astype(np.float32)
+            x_aug *= scaling_factors
+            # 3. Lead Dropout (Scollegamento casuale delle derivazioni)
+            dropout_mask = np.random.binomial(1, 0.95, size=(1, x_aug.shape[1])).astype(np.float32)
+            x_aug *= dropout_mask
+            x = x_aug
+            
+        x = torch.tensor(x, dtype=torch.float32)
         if self.y is not None:
             y = torch.tensor(self.y[idx], dtype=torch.float32)
             return x, y
@@ -91,7 +106,8 @@ class PatchTSTModel(ClassificationModel):
     def __init__(self, name, n_classes, freq, outputfolder, input_shape,
                  patch_len=16, stride=8, n_layers=3, d_model=128, n_heads=16,
                  d_ff=256, dropout=0.2, lr=1e-3, epochs=30, batch_size=128,
-                 revin=True, device='cuda', early_stopping_patience=5):
+                 revin=True, device='cuda', early_stopping_patience=5, augment=False,
+                 class_balancing=False, pos_weight_cap=10.0):
         super().__init__()
         self.name = name
         self.n_classes = n_classes
@@ -113,6 +129,9 @@ class PatchTSTModel(ClassificationModel):
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.early_stopping_patience = early_stopping_patience
         self.model = None
+        self.augment = augment
+        self.class_balancing = class_balancing
+        self.pos_weight_cap = pos_weight_cap
 
     def fit(self, X_train, y_train, X_val, y_val):
         # convert X_train/X_val and y_train/y_val to float32 numpy arrays
@@ -121,8 +140,8 @@ class PatchTSTModel(ClassificationModel):
         y_train = np.array([l.astype(np.float32) for l in y_train])
         y_val = np.array([l.astype(np.float32) for l in y_val])
         
-        train_dataset = ECGDataset(X_train, y_train)
-        val_dataset = ECGDataset(X_val, y_val)
+        train_dataset = ECGDataset(X_train, y_train, augment=self.augment)
+        val_dataset = ECGDataset(X_val, y_val, augment=False)
         
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
@@ -146,13 +165,30 @@ class PatchTSTModel(ClassificationModel):
         self.model.to(self.device)
         
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=1e-2)
-        criterion = nn.BCEWithLogitsLoss()
+        
+        if self.class_balancing:
+            pos_samples = y_train.sum(axis=0)
+            neg_samples = y_train.shape[0] - pos_samples
+            pos_weight = np.ones(y_train.shape[1], dtype=np.float32)
+            mask = pos_samples > 0
+            pos_weight[mask] = neg_samples[mask] / pos_samples[mask]
+            if self.pos_weight_cap is not None:
+                pos_weight = np.clip(pos_weight, None, self.pos_weight_cap)
+            pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float32).to(self.device)
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+        else:
+            criterion = nn.BCEWithLogitsLoss()
         
         best_val_loss = float('inf')
         patience_counter = 0
         best_model_state = None
         
+        import time
+        print("model:", self.name, flush=True)
+        print(f"{'epoch':<9}{'train_loss':<12}{'valid_loss':<12}{'time':<10}", flush=True)
+        
         for epoch in range(self.epochs):
+            epoch_start_time = time.time()
             self.model.train()
             train_loss = 0.0
             for batch_x, batch_y in train_loader:
@@ -177,7 +213,11 @@ class PatchTSTModel(ClassificationModel):
                     val_loss += loss.item() * batch_x.size(0)
             val_loss /= len(val_dataset)
             
-            print(f"[{self.name}] Epoch {epoch+1}/{self.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}", flush=True)
+            elapsed = time.time() - epoch_start_time
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
+            time_str = f"{mins:02d}:{secs:02d}"
+            print(f"{epoch:<9}{train_loss:<12.6f}{val_loss:<12.6f}{time_str:<10}", flush=True)
             
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
