@@ -1,5 +1,9 @@
 import os
 import sys
+
+# Change working directory to the script's directory so relative paths resolve correctly
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 import argparse
 import ast
 import pickle
@@ -36,8 +40,8 @@ def main():
     args = parser.parse_args()
 
     # Paths
-    data_dir = 'data/ptbxl/'
-    output_dir = 'output/'
+    data_dir = '../data/ptbxl/'
+    output_dir = '../output/'
     plots_dir = os.path.join(output_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
 

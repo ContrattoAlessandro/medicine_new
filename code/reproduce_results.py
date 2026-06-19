@@ -24,7 +24,7 @@ def main():
     models = [
         conf_fastai_resnet1d18,
         conf_wavelet_standard_nn,
-        #conf_raw_standard_nn,
+        conf_raw_standard_nn,
         conf_patchtst_standard,
         ]
 

@@ -1,4 +1,8 @@
 import os
+
+# Change working directory to the script's directory so relative paths resolve correctly
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 import ast
 import pickle
 import numpy as np
