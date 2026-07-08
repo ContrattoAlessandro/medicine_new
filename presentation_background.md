@@ -58,17 +58,11 @@ AI, particularly **Deep Learning (DL)**, offers a paradigm shift by automaticall
 ---
 
 ### 6. State of the Art (SOTA)
-Modern research in deep learning for ECG analysis spans several paradigms:
-*   **Convolutional Neural Networks (CNNs):** Architectures like 1D ResNets (e.g., `ResNet1d18`) are the standard benchmark, using 1D convolutional layers to extract local patterns (like QRS complexes, P and T waves) and pooling operations to capture global context.
-*   **Time-Series Transformers:** Models like `PatchTST` segment time-series data into sub-series patches and apply self-attention mechanisms, excelling at capturing long-range temporal dependencies.
-*   **Classical Feature-Extraction baselines:** Leveraging signal processing techniques like the **Discrete Wavelet Transform (DWT)** to extract time-frequency components, which are subsequently classified by feedforward networks.
-
-> [!TIP]
-> **Suggested Presentation Graphic: CNN vs. Transformer vs. DWT Architectures**
-> Visual block diagrams comparing:
-> 1. CNNs (kernel gliding over 1D signals capturing morphology).
-> 2. Time-Series Transformers (local signal patching and self-attention linking temporal segments).
-> 3. Discrete Wavelet Transform (decomposing signal into approximation and detail coefficients).
+Modern research in deep learning for ECG analysis has moved beyond simple classifiers, focusing on advanced architectures designed to capture complex spatial, temporal, and multi-modal interactions:
+*   **Foundation Models & Self-Supervised Learning (SSL):** The field is shifting towards pre-training massive models (e.g., ECG-BERT, CLOCS, Heart-BERT) on millions of unlabelled ECG recordings using contrastive learning or masked autoencoding. These foundation models are then fine-tuned on specific clinical tasks, achieving high performance even with limited annotations.
+*   **Hybrid CNN-Transformer Architectures:** Rather than using pure attention or convolutions, SOTA models combine them. 1D CNN layers are utilized as local feature extractors (capturing high-frequency morphological features like the QRS complex and downsampling the signal), while a subsequent Transformer encoder processes the generated embeddings to learn global temporal context and long-range dependencies.
+*   **State Space Models (SSMs) & Modern Transformers:** For long-term or high-frequency recordings (like ambulatory Holters or wearable patches), architectures like Mamba (Structured State Space Models) or long-context Transformers capture extremely long-range temporal dependencies with linear or sub-quadratic computational complexity.
+*   **Multimodal Clinical Integration:** Advanced clinical decision systems combine raw ECG waveforms with heterogeneous data sources (such as patient demographics, Electronic Health Records (EHR) text, and imaging data) using multi-modal fusion networks.
 
 ---
 
@@ -86,12 +80,20 @@ Our project utilizes two primary clinical datasets to train, evaluate, and test 
     *   **Signal Channels:** 12 standard leads (I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6).
     *   **Dimensions:** At 100 Hz sampling frequency, each record is formatted as a matrix of shape `(1000, 12)` (1,000 temporal samples across 12 channels). At 500 Hz, the matrix is `(5000, 12)`.
 *   **ICBEB:**
-    *   **Instances & Subjects:** 6,877 ECG records.
+    *   **Instances & Subjects:** 6,877 clinical ECG records.
     *   **Signal Channels:** 12 standard leads.
-    *   **Dimensions:** The records have variable lengths (ranging from 6 to 60 seconds). For zero-shot testing, they are resampled to 100 Hz and structured to match the input footprint of the pretrained PTB-XL models.
+    *   **Dimensions:** Variable recording lengths in the source database, but preprocessed/resampled to 100 Hz and formatted as a matrix of shape `(1000, 12)` (10-second duration at 100Hz) to match the input shape expected by PTB-XL models for zero-shot testing. No NaN or Inf values are present in the signals.
 
 #### C. Data Distribution and Metadata Features
-*   **Demographic Features:** Both databases contain patient-level demographics such as **Age** and **Sex** (and PTB-XL also includes **Height** and **Weight**), which are critical for studying demographic-specific diagnostic variations.
+*   **Demographic Features & Cohort Characteristics:** Both databases contain patient-level demographics such as **Age** and **Sex** (and PTB-XL also includes **Height** and **Weight**), which are critical for studying demographic-specific diagnostic variations.
+    *   **PTB-XL Cohort:** Age is **59.8 ± 17.0 years**. Gender distribution is **52.1% Male (0)** and **47.9% Female (1)**.
+    *   **ICBEB Cohort:** Age is **60.2 ± 19.1 years**. Gender distribution is **53.8% Male (1)** and **46.2% Female (0)**.
+    The age distributions have a slightly different spread and peak shape, and gender proportions are slightly shifted toward males in the ICBEB cohort.
+
+> [!TIP]
+> **Suggested Presentation Graphic: Demographic Cohort Comparison**
+> Insert the generated figure [demographics_comparison.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/demographics_comparison.png) here. It illustrates the comparative age histograms (with KDE density plots) and gender percentages between the two datasets side-by-side, visually highlighting cohort variations.
+
 *   **Signal Quality & Artifact Indicators:** PTB-XL includes metadata detailing signal corruption:
     *   *Baseline drift, static noise, burst noise, electrode contact problems,* and *pacemaker* signals. These indicators motivate the use of preprocessing (e.g., bandpass filtering from 0.5 to 40 Hz) to clear clinical signal artifacts.
 
@@ -108,11 +110,23 @@ Our project utilizes two primary clinical datasets to train, evaluate, and test 
     *   *3 pathology labels:* 920 records (4.2%)
     *   *4 pathology labels:* 159 records (0.7%)
     This co-occurrence highlights the critical clinical need for **multi-label classification** models rather than mutually exclusive classifiers.
-*   **ICBEB Label Distribution:** Focuses on 9 diagnostic classes (e.g., CRBBB, AFIB, NORM, VPC, 1AVB) with sharp imbalances (e.g., 1,857 instances of CRBBB vs. 220 instances of ST-elevation).
+*   **ICBEB Label Distribution and Sparsity Shift:** Focuses on 9 diagnostic classes. The EDA reveals the exact distribution and severe imbalances within these 9 categories:
+    *   **CRBBB (Complete Right Bundle Branch Block):** 1,857 instances (~27.0%) — huge overrepresentation compared to PTB-XL (~2.5%).
+    *   **AFIB (Atrial Fibrillation):** 1,221 instances (~17.8%).
+    *   **NORM (Normal ECG):** 918 instances (~13.4%) — significantly lower proportion compared to PTB-XL (~43.6%).
+    *   **STD_ (ST Depression):** 869 instances (~12.6%).
+    *   **1AVB (1st-degree AV Block):** 722 instances (~10.5%).
+    *   **VPC (Ventricular Premature Complex):** 700 instances (~10.2%) — matches PTB-XL's `PVC`.
+    *   **PAC (Premature Atrial Complex):** 616 instances (~9.0%).
+    *   **CLBBB (Complete Left Bundle Branch Block):** 236 instances (~3.4%).
+    *   **STE_ (ST Elevation):** 220 instances (~3.2%) — significantly more frequent than in PTB-XL (~0.13%).
+*   **Sparsity Discrepancy (Single-Label vs Multi-Label):** Unlike PTB-XL which is heavily multi-label, the ICBEB database is predominantly **single-label** (~93.0% of records have exactly 1 diagnostic label, 6.8% have 2 labels, and 0.1% have 3). Furthermore, the correlation/co-occurrence matrix between these 9 classes in ICBEB shows near-zero correlations, indicating that the target labels are practically mutually exclusive.
 
 > [!TIP]
-> **Suggested Presentation Graphic: PTB-XL & ICBEB Class Distributions**
-> Insert the generated figure `class_imbalance.png` here. It contains two plots: the distribution of PTB-XL diagnostic superclasses (highlighting class imbalance) and the top 25 most frequent SCP codes.
+> **Suggested Presentation Graphics: Label Distributions and Sparsity**
+> - Insert the generated figure [label_distribution_comparison.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/label_distribution_comparison.png) here to compare relative class frequencies and emphasize the domain shift in diagnosis rates.
+> - Insert the figure [multilabel_comparison.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/multilabel_comparison.png) here to contrast single-label vs. multi-label structures between ICBEB and PTB-XL.
+> - Insert [class_cooccurrence_icbeb.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/class_cooccurrence_icbeb.png) to visualize the co-occurrence correlations.
 
 #### E. Label Aggregation Strategy
 ECGs are annotated with highly specific SCP-ECG clinical statements (71 classes). To train robust models and adapt to clinical workflows, these labels are aggregated using a hierarchical mapping defined in `scp_statements.csv`:
@@ -126,6 +140,14 @@ Each of the 12 leads represents a specific physical orientation of the heart, ca
 *   **Anterior/Septal Leads (V1 to V4):** Reflect the anterior wall. Alterations in these leads indicate Anterior Myocardial Infarction (AMI).
 *   **Lateral Leads (I, aVL, V5, V6):** Reflect the lateral ventricular wall.
 *   **Physiological Motivation for AI Saliency:** In our explainability sub-module ([explain_ecg.py](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/code/explain_ecg.py)), the computed gradients correspond directly to these physical leads. We can clinically validate the AI model by verifying whether an inferior MI prediction is driven by high saliency values in the inferior leads (II, III, aVF), aligning the neural network's visual explanation with established cardiology guidelines.
+
+> [!TIP]
+> **Suggested Presentation Graphic: 12-Lead ECG Signal Morphologies**
+> To show how actual 10-second multi-channel signals look for different categories, insert the generated ECG sample waveform figures here:
+> - Normal ECG trace: [ecg_sample_NORM.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/ecg_sample_NORM.png)
+> - Complete Right Bundle Branch Block (CRBBB) trace: [ecg_sample_CRBBB.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/ecg_sample_CRBBB.png)
+> - Atrial Fibrillation (AFIB) trace: [ecg_sample_AFIB.png](file:///c:/Users/alexa/Desktop/ecg_ptbxl_benchmarking-master/output/eda_icbeb/ecg_sample_AFIB.png)
+> These figures visualize the 12 leads stacked vertically over time, making it easy to identify clinical waveforms (P-waves, QRS-complexes, T-waves) and standard noise/interference.
 
 #### G. Potential and Limitations of the Datasets
 *   **Potentials:** Excellent resolution for multi-class, multi-label diagnostic benchmarking; standardized cross-validation protocol; and out-of-domain evaluation using ICBEB.
@@ -158,6 +180,58 @@ Despite the high performance of SOTA models, several critical gaps remain, which
 > [!TIP]
 > **Suggested Presentation Graphic: Project Methodology Pillars**
 > A conceptual diagram illustrating how our project integrates the three core modules: 1. Benchmarking (varying models/augmentation) $\rightarrow$ 2. Post-hoc Calibration (Platt scaling) $\rightarrow$ 3. Explainability (gradient maps mapped to clinical leads).
+
+```mermaid
+graph TD
+    subgraph Input ["Input Data"]
+        ECG["12-Lead ECG Signal<br>(Time-Series Matrix)"]
+        Labels["Multi-Label Targets<br>(SCP-ECG Annotations)"]
+    end
+
+    subgraph Benchmarking ["Pillar 1: Standardized Benchmarking"]
+        Prep["Preprocessing & Standardization<br>(Butterworth Filter & Z-Score)"]
+        
+        subgraph Models ["Evaluated Architectures"]
+            ResNet["1D ResNet-18<br>(Morphological Learning)"]
+            Patch["PatchTST<br>(Attention-Based Learning)"]
+            Wavelet["Wavelet NN<br>(Time-Frequency Baseline)"]
+            Stats["RawStats + NN<br>(Statistical Baseline)"]
+        end
+        
+        Prep --> Models
+    end
+
+    subgraph PostProcessing ["Post-Processing & Decision Support"]
+        subgraph Calibration ["Pillar 2: Post-Hoc Calibration"]
+            Platt["Platt Scaling<br>(Logistic Regression)"]
+            CalProb["Calibrated Probabilities<br>(Empirical Risk Assessment)"]
+            Platt --> CalProb
+        end
+
+        subgraph XAI ["Pillar 3: Explainable AI (XAI)"]
+            Grads["Gradient Backpropagation<br>(dOut/dIn)"]
+            Smooth["Gaussian Smoothing<br>(Noise Reduction)"]
+            Saliency["Anatomical Saliency Maps<br>(Lead-Specific Overlays)"]
+            Grads --> Smooth --> Saliency
+        end
+    end
+
+    ECG --> Prep
+    Labels --> Prep
+    
+    ResNet --> Platt
+    Patch --> Platt
+    Wavelet --> Platt
+    Stats --> Platt
+
+    ResNet --> Grads
+    Patch --> Grads
+    Wavelet --> Grads
+    Stats --> Grads
+
+    CalProb --> Clinical["Clinically Trustworthy Decision Support"]
+    Saliency --> Clinical
+```
 
 ---
 
@@ -242,13 +316,138 @@ To ensure clinical validity and prevent **patient leakage** (which occurs when m
     $$\hat{x} = \frac{x - \mu}{\sigma}$$
     where mean ($\mu$) and standard deviation ($\sigma$) are fitted *exclusively* on the training set to prevent data leakage.
 
-#### D. Machine Learning Models
-1.  **Baseline Models:**
-    *   `RAW_STATS`: Discards temporal waveforms by extracting basic statistics (mean, standard deviation, minimum, maximum, median, skewness, and kurtosis) across all 12 channels. Classified via a standard Feedforward Neural Network (FNN).
-    *   `WAVELET`: Applies Discrete Wavelet Transform (DWT) using a Daubechies (db4) wavelet at a 5-level decomposition. Time-frequency components are extracted and classified using a shallow FNN.
-2.  **Deep Representation Learning Models:**
-    *   `fastai_resnet1d18`: A 1D convolutional neural network with 18 layers. It processes the raw 12-channel time-series signals directly, learning spatial relationships across leads and temporal structures (wave features like PR intervals, QRS duration) end-to-end.
-    *   `PATCHTST`: A state-of-the-art Time-Series Transformer. It breaks down the 12-lead time series into overlapping local patches and applies self-attention to learn long-range temporal dependencies.
+#### D. Detailed Machine Learning Model Architectures
+
+This section details the design, feature extraction pipelines, mathematical formulations, and structural configurations of the four benchmarking architectures compared in our project.
+
+---
+
+##### 1. Raw + Neural Network Baseline (`RAW_STATS`)
+*   **Concept:** This baseline bypasses learning complex temporal representations directly from the raw waveform by extracting domain-informed statistical summaries from each lead. It maps the overall shape, variation, and rate of change of the ECG signals into a static feature vector classified by a Multilayer Perceptron (MLP).
+*   **Feature Extraction Pipeline:**
+    For each of the 12 channels (leads) $c \in \{1, \dots, 12\}$, the 10-second raw signal $x^{(c)} \in \mathbb{R}^{1000}$ is processed to extract a total of **30 features** grouped into three categories:
+    1.  **Raw Signal Time-Domain Features (12 features):**
+        *   **Shannon Entropy ($H$):** Measures signal complexity based on the empirical probability distribution (using a histogram of 10 bins) of amplitude values:
+            $$H(x^{(c)}) = -\sum_{i} p(x_i^{(c)}) \log_e p(x_i^{(c)})$$
+        *   **Zero-Crossing Count:** Captures frequency-related details by counting how often the signal changes sign:
+            $$N_{ZC} = \sum_{t=1}^{T-1} \mathbb{I}\left(x_t^{(c)} \cdot x_{t+1}^{(c)} < 0\right)$$
+        *   **Mean-Crossing Count:** Counts how often the signal crosses its channel mean $\mu^{(c)}$:
+            $$N_{MC} = \sum_{t=1}^{T-1} \mathbb{I}\left((x_t^{(c)} - \mu^{(c)}) \cdot (x_{t+1}^{(c)} - \mu^{(c)}) < 0\right)$$
+        *   **Statistical Moments & Percentiles (9 features):** Mean ($\mu$), variance ($\sigma^2$), standard deviation ($\sigma$), root mean square (RMS = $\sqrt{\frac{1}{T}\sum_t (x_t^{(c)})^2}$), median (50th percentile), and the 5th, 25th, 75th, and 95th percentiles.
+    2.  **First Derivative Statistics (9 features):**
+        *   The first-order difference $dx^{(c)}[t] = x^{(c)}[t] - x^{(c)}[t-1]$ is computed to capture signal velocity (rate of change).
+        *   The same 9 statistical metrics (percentiles, mean, std, RMS, etc.) are computed on $dx^{(c)}$.
+    3.  **Second Derivative Statistics (9 features):**
+        *   The second-order difference $d^2x^{(c)}[t] = dx^{(c)}[t] - dx^{(c)}[t-1]$ is computed to capture signal acceleration.
+        *   The same 9 statistical metrics are computed on $d^2x^{(c)}$.
+    *   **Concatenation:** The features are concatenated across all 12 channels to yield a single fixed-size feature vector:
+        $$\text{Feature Dimension} = 12 \text{ leads} \times 30 \text{ features/lead} = 360 \text{ features}$$
+
+*   **Classifier Architecture & Training:**
+    *   **Standardization:** The 360-dimensional vector is normalized using $Z$-score scaling fitted exclusively on the training folds.
+    *   **Network Layout:**
+        *   *Input Layer:* 360 units.
+        *   *Hidden Layer:* 128 units, activated via Rectified Linear Unit (ReLU), followed by a Dropout layer ($p = 0.25$) to prevent overfitting.
+        *   *Output Layer:* $C$ units (where $C = 5, 23, \text{ or } 71$ depending on the target task) with Sigmoid activation for multi-label inference.
+    *   **Optimization:** Trained using the Keras framework with the **Adamax** optimizer, a batch size of 128, and a maximum of 30 epochs.
+
+---
+
+##### 2. Wavelet + Neural Network Baseline (`WAVELET`)
+*   **Concept:** Captures localized time-frequency dynamics. Since ECG structures (like the rapid QRS spikes and slow T-waves) occur at different frequency bands and time intervals, the Discrete Wavelet Transform (DWT) decomposes the signal into distinct sub-bands before statistical summary.
+*   **Feature Extraction Pipeline:**
+    1.  **DWT Decomposition:**
+        For each channel $c \in \{1, \dots, 12\}$, a 5-level DWT decomposition is computed using the **Daubechies 6 (`db6`)** mother wavelet. This decomposes the 1000-sample signal $x^{(c)}$ into 6 coefficient arrays:
+        *   **Approximation Coefficients ($cA_5$):** Captures the low-frequency background baseline trend (samples $0$ to $3.125$ Hz at 100 Hz sampling rate).
+        *   **Detail Coefficients ($cD_5, cD_4, cD_3, cD_2, cD_1$):** Represents detail components across progressive octave bands:
+            *   $cD_5$: $3.125 - 6.25$ Hz (T-wave structures)
+            *   $cD_4$: $6.25 - 12.5$ Hz (P-wave and slow QRS components)
+            *   $cD_3$: $12.5 - 25.0$ Hz (Fast QRS complex spikes)
+            *   $cD_2$: $25.0 - 50.0$ Hz (High-frequency details, muscle noise)
+            *   $cD_1$: $50.0 - 100.0$ Hz (High-frequency noise components)
+    2.  **Sub-band Feature Calculation:**
+        For each of the 6 coefficient subsets ($cA_5$ and $cD_5 - cD_1$), the same **12 statistical features** (Shannon entropy, zero crossings, mean crossings, and the 9 moments/percentiles detailed in `RAW_STATS`) are calculated.
+    3.  **Concatenation:**
+        $$\text{Feature Dimension} = 12 \text{ leads} \times \left(6 \text{ sub-bands} \times 12 \text{ features/sub-band}\right) = 864 \text{ features}$$
+
+*   **Classifier Architecture & Training:**
+    *   **Standardization:** The 864-dimensional feature vector is normalized via a training-fitted `StandardScaler`.
+    *   **Network Layout:** Matches the `RAW_STATS` baseline:
+        *   *Input Layer:* 864 units.
+        *   *Hidden Layer:* 128 units (ReLU) + Dropout ($p = 0.25$).
+        *   *Output Layer:* $C$ units (Sigmoid).
+    *   **Optimization:** Trained via Keras with the **Adamax** optimizer, batch size of 128, and a maximum of 30 epochs.
+
+---
+
+##### 3. 1D ResNet-18 (`fastai_resnet1d18`)
+*   **Concept:** A deep representation learning architecture adapted from computer vision. It processes the raw 12-channel time-series signals directly, learning temporal features (wave morphology, PR and QT intervals) and spatial relationships (inter-lead correlation) end-to-end without manual engineering.
+*   **Architecture Breakdown:**
+    *   **Input Shape:** `(BatchSize, 12, 1000)` — representing 12 channels and 1000 sequential samples.
+    *   **Stem Block:**
+        Processes the input to extract low-level local patterns and reduce temporal length:
+        1.  *1D Convolution:* 12 input channels $\rightarrow$ 128 output channels, kernel size $k = 5$, stride $s = 2$, padding $p = 2$, no bias. Output shape: `(BatchSize, 128, 500)`.
+        2.  *Batch Normalization (1D) & ReLU activation.*
+        3.  *1D Max Pooling:* kernel size $k = 3$, stride $s = 2$, padding $p = 1$. Output shape: `(BatchSize, 128, 250)`.
+    *   **ResNet Backbone (4 Layers, 8 Residual Blocks):**
+        Consists of 4 sequential layers, each comprising 2 stacked `BasicBlock1d` structures (total of 8 residual blocks, matching ResNet-18).
+        *   **Fixed Channel Dimension (`fix_feature_dim=True`):** In contrast to standard ResNets where the channel depth doubles at each layer (e.g., 64 $\rightarrow$ 128 $\rightarrow$ 256 $\rightarrow$ 512), this architecture fixes the channel depth at **128 channels** across all 4 layers. This prevents parameter explosion and guards against overfitting on the training cohort.
+        *   **BasicBlock1d Structure:**
+            Inside each block, the signal passes through:
+            $$\text{Block Input } x \longrightarrow \text{Conv1d}(k=5, s=1, p=2) \longrightarrow \text{BatchNorm1d} \longrightarrow \text{ReLU} \longrightarrow \text{Conv1d}(k=3, s=1, p=1) \longrightarrow \text{BatchNorm1d} \longrightarrow \oplus \longrightarrow \text{ReLU} \longrightarrow \text{Block Output}$$
+            *   *Residual Shortcut:* A skip connection adds the block's input $x$ directly to the output of the second batch-norm. If a layer transitions down in resolution (stride $s = 2$ in the first block of layers 2, 3, or 4), a 1D projection convolution with kernel size $1$ and stride $2$ is applied to the shortcut to align shape.
+    *   **Adaptive Concat Pooling:**
+        To summarize the temporal dimension `(BatchSize, 128, FinalTimeSteps)` down to a flat representation, standard average pooling is combined with max pooling:
+        $$\text{ConcatPool}(x) = \left[ \text{AdaptiveAvgPool1d}(1)(x) \ ; \ \text{AdaptiveMaxPool1d}(1)(x) \right]$$
+        This preserves both the average background rhythm and the sharp transient peaks (like R-waves).
+        *   *Output Shape:* `(BatchSize, 256)` (since $128 \text{ channels} \times 2 = 256$).
+    *   **Fully Connected Head:**
+        *   Flatten $\rightarrow$ BatchNorm1d $\rightarrow$ Dropout ($p = 0.25$) $\rightarrow$ Linear ($256 \rightarrow 128$) $\rightarrow$ ReLU $\rightarrow$ BatchNorm1d $\rightarrow$ Dropout ($p = 0.5$) $\rightarrow$ Linear ($128 \rightarrow C$).
+        *   No final activation in the PyTorch model; output logits are fed into `BCEWithLogitsLoss`.
+
+*   **Training & Optimization:**
+    Trained via PyTorch and the fastai library. The optimizer is **AdamW** (weight decay = $10^{-2}$) scheduled using the **One-Cycle Policy** (which sweeps learning rate up to $10^{-2}$ and down) for 50 epochs with a batch size of 128.
+
+---
+
+##### 4. PatchTST (Patch Time Series Transformer)
+*   **Concept:** A state-of-the-art Transformer-based model designed specifically for time-series forecasting and classification. It processes inputs using two key design paradigms: **Channel-Independence** (treating each lead as an independent univariate series) and **Patching** (segmenting signals into local sub-series windows to preserve local semantic features and reduce computation).
+*   **Architecture Breakdown:**
+    *   **Input Shape:** `(BatchSize, 1000, 12)` — representing 1000 time steps and 12 leads.
+    *   **Channel-Independence (CI):**
+        Instead of learning joint multi-channel representations in the early layers, the input is permuted to `(BatchSize, 12, 1000)` and treated as 12 independent univariate series. During backbone forward pass, the channel dimension is merged into the batch dimension, yielding an effective batch shape of `(BatchSize * 12, 1000, 1)`. All 12 leads share the same weights in the Transformer backbone, regularizing the model and allowing it to learn generalized temporal patterns.
+    *   **RevIN (Reversible Instance Normalization):**
+        Each channel's sequence is normalized prior to patching to remove local scaling and offset shifts:
+        $$\bar{x}^{(c)} = \frac{x^{(c)} - \mu^{(c)}}{\sigma^{(c)}}$$
+        where $\mu^{(c)}$ and $\sigma^{(c)}$ are the mean and standard deviation of instance $x^{(c)}$.
+    *   **Patching Layer:**
+        The normalized sequence of length $L = 1000$ is segmented into overlapping patches of length $P = 16$ with a stride $S = 8$:
+        *   End-padding is applied to ensure exact division.
+        *   This results in a patch sequence of length:
+            $$N = \left\lfloor \frac{L - P}{S} \right\rfloor + 2 = \left\lfloor \frac{1000 - 16}{8} \right\rfloor + 2 = 124 \text{ patches}$$
+        *   *Dimension shift:* Shape changes from `(BatchSize * 12, 1000)` to `(BatchSize * 12, 124, 16)`.
+        *   **Core Advantages of Patching:**
+            1.  *Reduces Attention Complexity:* Standard self-attention scales quadratically with sequence length ($O(L^2)$). By grouping points into patches, sequence length drops from $1000$ to $124$, reducing attention memory/compute footprint by a factor of $\approx 64$ ($O(N^2)$).
+            2.  *Captures Local Morphology:* It extracts local shape primitives (like R-wave slopes) as single token embeddings rather than isolated points.
+    *   **Linear Projection & Positional Encoding:**
+        Each 16-element patch is mapped via a linear layer to the model dimension $d_{model} = 128$. A learnable 1D positional encoding is added to retain patch order:
+        $$z_i = W_{proj} \cdot p_i + e_{pos, i} \quad \Rightarrow \quad Z \in \mathbb{R}^{(BatchSize * 12) \times 124 \times 128}$$
+    *   **Transformer Encoder Backbone:**
+        Processes the patch sequence through **3 Encoder Layers** featuring **16 attention heads**, a feedforward network expansion dimension of $d_{ff} = 256$, and a dropout rate of $0.2$:
+        $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
+    *   **Multi-Label Classification Head:**
+        1.  *Backbone Output:* Shape `(BatchSize * 12, 124, 128)`.
+        2.  *De-merge Channels:* Restructured to `(BatchSize, 12, 128, 124)`.
+        3.  *Global Average Pooling (GAP):* Average-pooled over the patch dimension (`dim=-1`), resulting in shape `(BatchSize, 12, 128)`. This aggregates temporal patch details.
+        4.  *Flattening:* Reshaped to `(BatchSize, 1536)` (where $1536 = 12 \text{ channels} \times 128 \text{ features}$).
+        5.  *Linear Head:* Passed to a classification MLP:
+            $$\text{Logits} = \text{Linear}\Big(\text{Dropout}_{0.5}\big(\text{LayerNorm}(Z_{flat})\big)\Big) \quad \Rightarrow \quad \mathbb{R}^{BatchSize \times C}$$
+        6.  Fed to standard `BCEWithLogitsLoss`.
+
+*   **Training & Optimization:**
+    Trained via PyTorch with **AdamW** (learning rate = $10^{-3}$, weight decay = $10^{-2}$) for 30 epochs with a batch size of 128. Features an early stopping scheduler monitoring validation fold loss with a patience of 5 epochs.
+
+---
 
 #### E. Training and Optimization
 *   **Loss Function:** Binary Cross Entropy with Logits Loss (`BCEWithLogitsLoss`) for independent multi-label supervision.
@@ -323,6 +522,38 @@ Medical classification models must balance complexity with sample availability t
 *   **Class-wise Threshold Swings:** Sweeping logits from 0.0 to 1.0 on the validation set to find the optimal cutoff for $F_\beta$ or $G_\beta$ ensures the model operates at its peak clinical condition.
 *   **Platt Scaling Calibration:** Using logistic regression on validation logits corrects deep learning calibration errors. If a calibrated model outputs a 15% probability of ischemia, approximately 15% of such cases will empirically contain the condition.
 
+#### G. Motivation for Model Selection
+To ensure a robust and scientifically interesting benchmark, we selected four models representing distinct signal-processing and machine learning paradigms. This spectrum allows us to contrast manual feature engineering with end-to-end representation learning:
+1.  **Raw + Neural Network Baseline (`RAW_STATS`):**
+    *   *Motivation:* Establishes the simplest baseline that discards sequential/temporal relationships. By reducing the time series to static global statistics, it answers the fundamental baseline question: *"How much diagnostic information can be predicted without modeling temporal progression?"*
+2.  **Wavelet + Neural Network Baseline (`WAVELET`):**
+    *   *Motivation:* Represents the classical signal processing paradigm combined with shallow learning. The Discrete Wavelet Transform (DWT) is a clinical standard for time-frequency analysis (e.g., baseline drift suppression and QRS peak identification). This model evaluates if manual frequency-band decomposition can match the feature-learning capabilities of deep architectures.
+3.  **1D ResNet-18 (`fastai_resnet1d18`):**
+    *   *Motivation:* Represents the deep convolutional paradigm. Convolutional Neural Networks (CNNs) excel at capturing translation-invariant local patterns (like the specific morphology of a QRS complex or ST segment) across time. ResNet's residual skip connections resolve the vanishing gradient problem, making it the industry-standard benchmark for raw medical biosignal classification.
+4.  **PatchTST (Patch Time Series Transformer):**
+    *   *Motivation:* Represents the state-of-the-art attention paradigm. While traditional Transformers struggle with noise and quadratic computational complexity on raw time-series points, PatchTST's *patching* (grouping points) and *channel-independence* (univariate processing) allow us to evaluate if self-attention mechanisms capture long-range temporal dependencies (rhythms) better than CNNs.
+
+#### H. Theoretical Hyperparameter Optimization Pipeline
+In our project, hyperparameter choices were fixed based on literature standards to manage computational constraints:
+    *Bayesian Optimization (e.g., Optuna, TPE):* Rather than exhaustive grid search (computationally prohibitive) or pure random search, Bayesian optimization builds a probabilistic surrogate model of the objective function (e.g., validation Macro ROC-AUC) to actively select and evaluate the most promising hyperparameter configurations.
+    *   *Key Hyperparameters to Tune (per Model):*
+        *   *`RAW_STATS` / `WAVELET`:*
+        *   Classifier hidden layer units: $[64, 128, 256]$
+        *   Dropout rates: $[0.1, 0.5]$
+        *   Wavelet families (`db4`, `db6`, `sym8`) and decomposition levels $[4, 5, 6]$ (for Wavelet model).
+    *   *`ResNet1d18`:*
+        *   Base filter channel depth (`inplanes`): $[64, 128, 256]$
+        *   Backbone kernel sizes: $[3, 5, 7, 9]$
+        *   Head dropout rates: $[0.2, 0.6]$
+        *   Weight decay parameters: $[10^{-4}, 10^{-2}]$
+    *   *`PatchTST`:*
+        *   Patch length $P \in [8, 16, 24]$ and Stride $S \in [4, 8, 12]$ (critical for adjusting temporal resolution)
+        *   Transformer hidden dimension $d_{model}$: $[64, 128, 256]$
+        *   Number of attention heads: $[8, 16]$
+        *   Number of encoder layers: $[2, 3, 4, 5]$
+4.  **Optimization Objective:**
+    *   The search objective is to maximize the macro-averaged validation ROC-AUC or minimize validation Brier score (for probability calibration) across the inner loops.
+
 ---
 
 ### 12. Appendix: Mathematical Reference
@@ -352,37 +583,112 @@ The experimental results from our benchmarking pipeline are analyzed below, comp
 We evaluated all models across multiple benchmark tasks. The tables below outline the **macro-averaged ROC-AUC, Precision-Recall AUC (AUPRC), and F1-max** scores on the unseen Test Set (Fold 10).
 
 ##### Task 1: All-Class Multi-Label Classification (exp0, 71 Classes)
-| Model / Method | Baseline (Raw Signals) AUC | Baseline AUPRC | Baseline F1 | Optimized (Filtered + Aug + Balanced) AUC | Optimized AUPRC | Optimized F1 |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **fastai_resnet1d18** | **0.917** | **0.348** | **0.766** | **0.924** | **0.337** | **0.711** |
-| **PatchTST_standard** | 0.893 | 0.312 | 0.716 | 0.899 | 0.325 | 0.671 |
-| **RawStats + NN** | 0.850 | 0.230 | 0.681 | 0.860 | 0.240 | 0.623 |
-| **Wavelet + NN** | 0.826 | 0.236 | 0.690 | 0.825 | 0.220 | 0.609 |
-| **naive (baseline)** | 0.500 | 0.039 | 0.557 | 0.500 | 0.039 | 0.557 |
+| Model / Method | Pipeline Configuration | ROC-AUC | AUPRC (PR-AUC) | F1-score Max |
+| :--- | :--- | :---: | :---: | :---: |
+| **Resnet1d18** | Raw (Raw Signals, no preproc) | 0.9170 | **0.3480** | **0.7660** |
+| | Augmented (Data Augmentation only) | 0.9160 | 0.3460 | 0.7610 |
+| | Filtered + Augmented (Filter + Aug) | 0.9210 | 0.3350 | 0.7650 |
+| | Optimized (Filter + Aug + Class Balancing) | **0.9240** | 0.3370 | 0.7110 |
+| | | | | |
+| **PatchTST** | Raw (Raw Signals, no preproc) | 0.8930 | 0.3120 | 0.7160 |
+| | Augmented (Data Augmentation only) | **0.9090** | **0.3410** | **0.7310** |
+| | Filtered + Augmented (Filter + Aug) | 0.9010 | 0.3150 | **0.7310** |
+| | Optimized (Filter + Aug + Class Balancing) | 0.8990 | 0.3250 | 0.6710 |
+| | | | | |
+| **RawStats + NN** | Raw (Raw Signals, no preproc) | 0.8500 | 0.2300 | 0.6810 |
+| | Augmented (Data Augmentation only) | 0.8520 | 0.2320 | 0.6850 |
+| | Filtered + Augmented (Filter + Aug) | 0.8510 | **0.2500** | **0.6970** |
+| | Optimized (Filter + Aug + Class Balancing) | **0.8600** | 0.2400 | 0.6230 |
+| | | | | |
+| **Wavelet + NN** | Raw (Raw Signals, no preproc) | 0.8260 | 0.2360 | 0.6900 |
+| | Augmented (Data Augmentation only) | **0.8400** | **0.2390** | 0.6900 |
+| | Filtered + Augmented (Filter + Aug) | 0.8180 | 0.2180 | **0.6910** |
+| | Optimized (Filter + Aug + Class Balancing) | 0.8250 | 0.2200 | 0.6090 |
 
 ##### Task 2: Superclass Diagnostic Classification (exp1.1.1, 5 Classes)
-| Model / Method | Baseline AUC | Baseline AUPRC | Baseline F1 | Optimized AUC | Optimized AUPRC | Optimized F1 |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **fastai_resnet1d18** | **0.927** | **0.820** | **0.816** | **0.933** | **0.833** | **0.816** |
-| **PatchTST_standard** | 0.903 | 0.779 | 0.786 | 0.898 | 0.771 | 0.746 |
-| **RawStats + NN** | 0.881 | 0.741 | 0.744 | 0.897 | 0.758 | 0.752 |
-| **Wavelet + NN** | 0.870 | 0.712 | 0.736 | 0.872 | 0.708 | 0.721 |
-| **naive (baseline)** | 0.500 | 0.259 | 0.448 | 0.500 | 0.259 | 0.448 |
+| Model / Method | Pipeline Configuration | ROC-AUC | AUPRC (PR-AUC) | F1-score Max |
+| :--- | :--- | :---: | :---: | :---: |
+| **Resnet1d18** | Raw (Raw Signals, no preproc) | 0.9270 | 0.8200 | 0.8160 |
+| | Augmented (Data Augmentation only) | 0.9310 | 0.8300 | 0.8180 |
+| | Filtered + Augmented (Filter + Aug) | 0.9300 | 0.8290 | **0.8220** |
+| | Optimized (Filter + Aug + Class Balancing) | **0.9330** | **0.8330** | 0.8160 |
+| | | | | |
+| **PatchTST** | Raw (Raw Signals, no preproc) | 0.9030 | 0.7790 | 0.7860 |
+| | Augmented (Data Augmentation only) | **0.9170** | **0.7980** | **0.7940** |
+| | Filtered + Augmented (Filter + Aug) | 0.9110 | 0.7940 | 0.7930 |
+| | Optimized (Filter + Aug + Class Balancing) | 0.8980 | 0.7710 | 0.7460 |
+| | | | | |
+| **RawStats + NN** | Raw (Raw Signals, no preproc) | 0.8810 | 0.7410 | 0.7440 |
+| | Augmented (Data Augmentation only) | 0.8820 | 0.7430 | 0.7480 |
+| | Filtered + Augmented (Filter + Aug) | 0.8950 | **0.7600** | **0.7670** |
+| | Optimized (Filter + Aug + Class Balancing) | **0.8970** | 0.7580 | 0.7520 |
+| | | | | |
+| **Wavelet + NN** | Raw (Raw Signals, no preproc) | 0.8700 | 0.7120 | 0.7360 |
+| | Augmented (Data Augmentation only) | 0.8710 | 0.7130 | 0.7320 |
+| | Filtered + Augmented (Filter + Aug) | **0.8760** | **0.7230** | **0.7420** |
+| | Optimized (Filter + Aug + Class Balancing) | 0.8720 | 0.7080 | 0.7210 |
 
 > [!NOTE]
 > *Key Observations:* End-to-end representation learning models (`ResNet1d18` and `PatchTST`) outperform hand-crafted baselines across all tasks. Retaining raw temporal waveforms is crucial: `ResNet1d18` achieves the top macro-AUC of **0.933** in the optimized superclass experiment.
+
+##### Detailed Classification Performance on Superclasses (ResNet1d18 Operating Thresholds)
+
+Since this is a **multi-label** classification problem (where multiple cardiac conditions can co-occur in the same patient), a traditional square multi-class confusion matrix (e.g., $5 \times 5$) is mathematically inapplicable. Instead, we must compute an **independent binary confusion matrix ($2 \times 2$) for each superclass**, and then evaluate the clinical metrics of **Sensitivity (Recall)** and **Specificity**.
+
+Below we analyze the performance of the `ResNet1d18` model (under the optimized workflow: filtered + data augmentation + class balancing) under two different operational threshold selection strategies:
+
+###### Scenario A: Global Threshold Maximizing F1-max ($\tau = 0.69$)
+This scenario uses a single global threshold for all classes, optimized on the test set to maximize the sample-centric macro F1-score (which yields **0.8164**):
+
+| Superclass | Threshold ($\tau$) | TP | FN | FP | TN | Sensitivity (Recall) | Specificity | F1-Score |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **CD** (Conduction Disturbance) | 0.69 | 416 | 82 | 161 | 1504 | 83.53% | 90.33% | 0.7740 |
+| **HYP** (Hypertrophy) | 0.69 | 206 | 57 | 224 | 1676 | 78.33% | 88.21% | 0.5945 |
+| **MI** (Myocardial Infarction) | 0.69 | 463 | 90 | 184 | 1426 | 83.73% | 88.57% | 0.7717 |
+| **NORM** (Normal ECG) | 0.69 | 900 | 64 | 212 | 987 | **93.36%** | 82.32% | 0.8671 |
+| **STTC** (ST/T Changes) | 0.69 | 462 | 61 | 231 | 1409 | 88.34% | 85.91% | 0.7599 |
+
+###### Scenario B: Class-Specific Thresholds Optimized on the Validation Set
+In a real-world clinical setting, a single global threshold is sub-optimal: critical pathologies require higher sensitivity (to minimize false negatives), whereas others require higher specificity. In this scenario, thresholds are optimized independently on the validation set (Fold 9) by maximizing the binary F1-score for each individual class, and then evaluated on the independent test set (Fold 10):
+
+| Superclass | Threshold ($\tau$) | TP | FN | FP | TN | Sensitivity (Recall) | Specificity | F1-Score |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **CD** (Conduction Disturbance) | 0.83 | 385 | 113 | 98 | 1567 | 77.31% | **94.11%** | 0.7849 |
+| **HYP** (Hypertrophy) | 0.90 | 152 | 111 | 77 | 1823 | 57.79% | **95.95%** | 0.6179 |
+| **MI** (Myocardial Infarction) | 0.62 | 478 | 75 | 221 | 1389 | **86.44%** | 86.27% | 0.7636 |
+| **NORM** (Normal ECG) | 0.77 | 877 | 87 | 178 | 1021 | 90.98% | **85.15%** | 0.8687 |
+| **STTC** (ST/T Changes) | 0.78 | 435 | 88 | 173 | 1467 | 83.17% | **89.45%** | 0.7692 |
+
+###### Clinical Significance of Operational Thresholds:
+*   **Reducing False Negatives (Sensitivity):** By lowering the threshold for Myocardial Infarction (`MI`) from 0.69 to **0.62**, clinical sensitivity increases from 83.73% to **86.44%**, reducing missed acute coronary syndromes (False Negatives) from 90 down to 75. This is critical in emergency triage to prevent missing acute events.
+*   **Mitigating Alert Fatigue (Specificity):** For the normal class (`NORM`), raising the threshold to **0.77** improves specificity to **85.15%** (up from 82.32%), reducing false positives (healthy patients incorrectly flagged with abnormalities) and mitigating patient anxiety and hospital diagnostic overhead.
 
 #### B. Internal vs. External Generalization (PTB-XL vs. ICBEB Dataset)
 
 To test the zero-shot generalization capabilities of models trained on PTB-XL, they were directly evaluated on the external Chinese ICBEB 2018 dataset.
 
 ##### Out-of-Domain Zero-Shot Transfer Comparison
-| Model / Method | Baseline exp_ICBEB (No Preproc) AUC | Baseline AUPRC | Baseline F1 | Optimized exp_ICBEB (Filtered + Aug + Balanced) AUC | Optimized AUPRC | Optimized F1 |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **fastai_resnet1d18** | **0.861** | **0.577** | **0.620** | **0.862** | **0.585** | **0.652** |
-| **PatchTST_standard** | 0.808 | 0.487 | 0.531 | 0.821 | 0.535 | 0.626 |
-| **RawStats + NN** | 0.720 | 0.367 | 0.321 | 0.752 | 0.413 | 0.504 |
-| **Wavelet + NN** | 0.684 | 0.330 | 0.358 | 0.730 | 0.375 | 0.465 |
+| Model / Method | Pipeline Configuration | ROC-AUC | AUPRC (PR-AUC) | F1-score Max |
+| :--- | :--- | :---: | :---: | :---: |
+| **Resnet1d18** | Raw (Raw Signals, no preproc) | 0.8610 | 0.5770 | 0.6200 |
+| | Augmented (Data Augmentation only) | **0.8720** | **0.5850** | 0.6160 |
+| | Filtered + Augmented (Filter + Aug) | 0.8540 | 0.5740 | 0.6050 |
+| | Optimized (Filter + Aug + Class Balancing) | 0.8620 | **0.5850** | **0.6520** |
+| | | | | |
+| **PatchTST** | Raw (Raw Signals, no preproc) | 0.8080 | 0.4870 | 0.5310 |
+| | Augmented (Data Augmentation only) | 0.8150 | 0.5260 | 0.5580 |
+| | Filtered + Augmented (Filter + Aug) | 0.8010 | 0.5040 | 0.5350 |
+| | Optimized (Filter + Aug + Class Balancing) | **0.8210** | **0.5350** | **0.6260** |
+| | | | | |
+| **RawStats + NN** | Raw (Raw Signals, no preproc) | 0.7200 | 0.3670 | 0.3210 |
+| | Augmented (Data Augmentation only) | 0.7400 | 0.3710 | 0.3360 |
+| | Filtered + Augmented (Filter + Aug) | 0.7330 | **0.4140** | 0.4710 |
+| | Optimized (Filter + Aug + Class Balancing) | **0.7520** | 0.4130 | **0.5040** |
+| | | | | |
+| **Wavelet + NN** | Raw (Raw Signals, no preproc) | 0.6840 | 0.3300 | 0.3580 |
+| | Augmented (Data Augmentation only) | 0.6840 | 0.3280 | 0.3750 |
+| | Filtered + Augmented (Filter + Aug) | 0.7170 | **0.3870** | 0.4260 |
+| | Optimized (Filter + Aug + Class Balancing) | **0.7300** | 0.3750 | **0.4650** |
 
 > [!NOTE]
 > *Cross-Dataset Performance Drop:* There is a distinct performance drop when transfer-testing models out-of-domain (e.g., ResNet1d18 macro-AUC drops from 0.924 internal to 0.862 external). This drop is caused by variations in demographic cohorts, electrode contact quality, and recording hardware.
@@ -398,7 +704,7 @@ To verify model robustness, we compared train, validation, and test fold perform
     2.  *Data Augmentation:* Amplitude scaling and lead masking acting as spatial dropout.
     3.  *Early Stopping:* Freezing weights based on validation loss, stopping models before they memorize patient-specific noise patterns.
 
-#### D. Deep Dive into Clinical Misclassifications (Curios Case Studies)
+#### D. Deep Dive into Clinical Misclassifications (Curious Case Studies)
 
 An audit of the severe misclassifications generated by the ResNet1d18 model (see `misclassification_examples.png`) highlights the limitations of clinical annotations and deep learning:
 
